@@ -485,8 +485,13 @@ def fetch_page(url):
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
             return resp.read().decode("utf-8", errors="replace")
-    except Exception:
+    except Exception as e:
+        global LAST_FETCH_ERROR
+        LAST_FETCH_ERROR = f"{type(e).__name__}: {e}"
         return None
+
+
+LAST_FETCH_ERROR = None
 
 
 def parse_date(html):
@@ -548,6 +553,7 @@ def refresh_urls_from_sitemap():
             text = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="replace")
         except Exception as e:
             print(f"  Page {pg}: {e}")
+            print(f"::warning::Sitemap page {pg} failed: {type(e).__name__}: {e}")
             time.sleep(2)
             continue
 
@@ -586,7 +592,7 @@ def refresh_urls_from_sitemap():
             urls.append(u)
 
     if len(seen) <= len(EXTRA_URLS):
-        print("ERROR: sitemap returned no UN New York URLs — EEAS may be blocking the runner.")
+        print(f"::error::Sitemap returned no UN New York URLs (pages read: {pg}) — EEAS may be blocking the runner.")
         sys.exit(1)
 
     URL_CACHE.write_text("\n".join(urls))
@@ -642,6 +648,7 @@ def scrape_all(urls):
             failed += 1
             if failed >= 10:
                 print("\n  Too many consecutive failures — likely rate-limited.")
+                print(f"::error::10 consecutive page fetches failed; last error: {LAST_FETCH_ERROR}")
                 print("  Progress is saved; re-run later to continue where we left off.")
                 break
             time.sleep(2)
@@ -741,7 +748,7 @@ def write_excel(rows):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
+def main():
     if "--refresh-urls" in sys.argv:
         print("Refreshing URL list from EEAS sitemap (takes ~2 min)...\n")
         urls = refresh_urls_from_sitemap()
@@ -754,3 +761,15 @@ if __name__ == "__main__":
         write_excel(rows)
     else:
         print("No statements scraped.")
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        import traceback
+        tb = traceback.extract_tb(e.__traceback__)[-1]
+        print(f"::error::{type(e).__name__}: {e} (line {tb.lineno} in {tb.name})")
+        raise
