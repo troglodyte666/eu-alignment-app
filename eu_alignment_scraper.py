@@ -25,7 +25,7 @@ import pandas as pd
 UN80_START  = date(2025, 9, 8)
 OUTPUT_FILE = Path(__file__).parent / "eu_alignment_stats.xlsx"
 URL_CACHE   = Path(__file__).parent / "statement_urls.txt"
-SITEMAP_PAGES = 21
+SITEMAP_PAGES = 120  # upper bound only; the loop stops at the first empty page
 
 TRACKED_COUNTRIES = {
     "Turkey":                 r"\bTurkey\b|Türkiye",
@@ -551,7 +551,12 @@ def refresh_urls_from_sitemap():
             time.sleep(2)
             continue
 
-        for entry in entry_pat.findall(text):
+        entries = entry_pat.findall(text)
+        if not entries:
+            print(f"  Sitemap page {pg}: empty — end of sitemap reached")
+            break
+
+        for entry in entries:
             loc_m = loc_pat.search(entry)
             if not loc_m:
                 continue
@@ -579,6 +584,10 @@ def refresh_urls_from_sitemap():
         if u not in seen:
             seen.add(u)
             urls.append(u)
+
+    if len(seen) <= len(EXTRA_URLS):
+        print("ERROR: sitemap returned no UN New York URLs — EEAS may be blocking the runner.")
+        sys.exit(1)
 
     URL_CACHE.write_text("\n".join(urls))
     print(f"\nSaved {len(urls)} URLs to {URL_CACHE}")

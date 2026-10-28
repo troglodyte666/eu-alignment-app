@@ -28,12 +28,11 @@ jobs:
 
       - name: Run UN80 scraper
         run: python eu_alignment_scraper.py --refresh-urls
-        continue-on-error: true
 
       - name: Commit updated data
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add scraped_results.csv scraped_results_ga79.csv
-           git diff --cached --quiet || git commit -m "Auto-update: $(date '+%d %b %Y')"
+          git diff --cached --quiet || git commit -m "Auto-update: $(date '+%d %b %Y')"
           git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/troglodyte666/eu-alignment-app.git

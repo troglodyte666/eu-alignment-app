@@ -4,8 +4,6 @@ Hosted on Streamlit Community Cloud.
 To update data: run scrapers locally, commit new CSVs to GitHub.
 """
 
-import datetime
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -32,19 +30,7 @@ st.set_page_config(page_title="EU Alignment Tracker", layout="wide")
 st.title("EU Delegation UN New York — Alignment Tracker")
 
 
-def get_last_updated():
-    times = [os.path.getmtime(c) for c in [CACHE_UN80, CACHE_GA79] if c.exists()]
-    if not times:
-        return "unknown"
-    return datetime.datetime.fromtimestamp(
-        max(times), tz=datetime.timezone.utc
-    ).strftime("%-d %B %Y")
-
-
-st.caption(f"Data last updated: **{get_last_updated()}** · Auto-refreshes Mon/Wed/Fri")
-
-
-@st.cache_data
+@st.cache_data(ttl=3600)
 def load_data():
     dfs = []
     for cache in [CACHE_UN80, CACHE_GA79]:
@@ -61,6 +47,9 @@ def load_data():
 df_all = load_data()
 abs_min = df_all["_date"].min().date()
 abs_max = df_all["_date"].max().date()
+
+# File mtimes on Streamlit Cloud reflect the container start, not the data — show the newest statement instead.
+st.caption(f"Latest statement in data: **{abs_max.strftime('%-d %B %Y')}** · Auto-refreshes Mon/Wed/Fri")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
