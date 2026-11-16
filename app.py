@@ -30,7 +30,7 @@ st.set_page_config(page_title="EU Alignment Tracker", layout="wide")
 st.title("EU Delegation UN New York — Alignment Tracker")
 
 
-@st.cache_data(ttl=3600)
+# Deliberately not cached: the CSVs are updated underneath the running app, and a cached copy hid new data.
 def load_data():
     dfs = []
     for cache in [CACHE_UN80, CACHE_GA79]:
