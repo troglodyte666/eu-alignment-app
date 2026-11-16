@@ -49,7 +49,7 @@ abs_min = df_all["_date"].min().date()
 abs_max = df_all["_date"].max().date()
 
 # File mtimes on Streamlit Cloud reflect the container start, not the data — show the newest statement instead.
-st.caption(f"Latest statement in data: **{abs_max.strftime('%-d %B %Y')}** · Auto-refreshes Mon/Wed/Fri")
+st.caption(f"Latest statement in data: **{abs_max.strftime('%-d %B %Y')}** · Checked for new statements daily")
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 st.sidebar.header("Filters")
@@ -139,3 +139,6 @@ st.dataframe(
     },
     height=450,
 )
+
+st.divider()
+st.caption("Created by Lena Cassidy (CPI Trainee, June-July 2026)")

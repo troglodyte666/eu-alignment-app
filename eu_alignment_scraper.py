@@ -25,7 +25,7 @@ import pandas as pd
 UN80_START  = date(2025, 9, 8)
 OUTPUT_FILE = Path(__file__).parent / "eu_alignment_stats.xlsx"
 URL_CACHE   = Path(__file__).parent / "statement_urls.txt"
-SITEMAP_PAGES = 120  # upper bound only; the loop stops at the first empty page
+SITEMAP_INDEX = "https://www.eeas.europa.eu/sitemap.xml"
 
 TRACKED_COUNTRIES = {
     "Turkey":                 r"\bTurkey\b|Türkiye",
@@ -541,29 +541,55 @@ def extract_alignment_info(text):
 
 # ── Sitemap refresh (optional) ────────────────────────────────────────────────
 
+# Reasons this run cannot be trusted to have seen every new statement.
+# Anything recorded here makes the run exit non-zero after saving its progress.
+PROBLEMS = []
+
+
+def fetch_text(url, attempts=3, timeout=60):
+    """Return (text, error), retrying transient failures."""
+    error = None
+    for attempt in range(1, attempts + 1):
+        try:
+            req = urllib.request.Request(url, headers=HEADERS)
+            with urllib.request.urlopen(req, timeout=timeout) as resp:
+                return resp.read().decode("utf-8", errors="replace"), None
+        except Exception as e:
+            error = f"{type(e).__name__}: {e}"
+            if attempt < attempts:
+                time.sleep(5 * attempt)
+    return None, error
+
+
 def refresh_urls_from_sitemap():
     """Scan EEAS sitemap and save fresh URL list to statement_urls.txt."""
     entry_pat = re.compile(r"<url>(.*?)</url>", re.DOTALL)
     loc_pat = re.compile(r"<loc>([^<]+)</loc>")
     lastmod_pat = re.compile(r"<lastmod>([^<]+)</lastmod>")
 
+    index, error = fetch_text(SITEMAP_INDEX)
+    if index is None:
+        print(f"::error::Could not read the EEAS sitemap index ({error}). "
+              "EEAS is probably blocking this machine; the next scheduled run will try again.")
+        sys.exit(1)
+    pages = loc_pat.findall(" ".join(re.findall(r"<sitemap>(.*?)</sitemap>", index, re.DOTALL)))
+    if not pages:
+        print("::error::The EEAS sitemap index lists no pages — the sitemap format may have changed.")
+        sys.exit(1)
+    print(f"  Sitemap index lists {len(pages)} pages")
+
     seen = set()
     urls = []
-    for pg in range(1, SITEMAP_PAGES + 1):
-        url = f"https://www.eeas.europa.eu/sitemap.xml?page={pg}"
-        try:
-            req = urllib.request.Request(url, headers=HEADERS)
-            text = urllib.request.urlopen(req, timeout=15).read().decode("utf-8", errors="replace")
-        except Exception as e:
-            print(f"  Page {pg}: {e}")
-            print(f"::warning::Sitemap page {pg} failed: {type(e).__name__}: {e}")
-            time.sleep(2)
-            continue
-
-        entries = entry_pat.findall(text)
+    failed_pages = []
+    for pg, page_url in enumerate(pages, 1):
+        text, error = fetch_text(page_url)
+        # EEAS answers a request for a page it does not have with the index itself, so a
+        # page without entries means the sitemap is incomplete, not that it has ended.
+        entries = entry_pat.findall(text) if text else []
         if not entries:
-            print(f"  Sitemap page {pg}: empty — end of sitemap reached")
-            break
+            failed_pages.append(pg)
+            print(f"  Sitemap page {pg:2d}: FAILED ({error or 'no entries'})")
+            continue
 
         for entry in entries:
             loc_m = loc_pat.search(entry)
@@ -586,17 +612,27 @@ def refresh_urls_from_sitemap():
                 urls.append(loc)
 
         print(f"  Sitemap page {pg:2d}: {len(urls)} total UN NY URLs so far")
-        time.sleep(1.5)
+        time.sleep(1)
+
+    if failed_pages:
+        PROBLEMS.append(f"{len(failed_pages)} of {len(pages)} sitemap pages could not be read "
+                        f"(pages {', '.join(map(str, failed_pages))})")
+
+    # Every statement already collected came from this sitemap, so if most of them
+    # are missing from it now, EEAS is serving a truncated sitemap.
+    known = {row["URL"] for row in load_cache()[0]}
+    if known:
+        coverage = len(known & seen) / len(known)
+        print(f"  Sitemap contains {coverage:.0%} of the {len(known)} statements already collected")
+        if coverage < 0.5:
+            PROBLEMS.append(f"the EEAS sitemap looks truncated: it contains only {coverage:.0%} "
+                            "of the statements already collected")
 
     # Merge extra URLs
     for u in EXTRA_URLS:
         if u not in seen:
             seen.add(u)
             urls.append(u)
-
-    if len(seen) <= len(EXTRA_URLS):
-        print(f"::error::Sitemap returned no UN New York URLs (pages read: {pg}) — EEAS may be blocking the runner.")
-        sys.exit(1)
 
     URL_CACHE.write_text("\n".join(urls))
     print(f"\nSaved {len(urls)} URLs to {URL_CACHE}")
@@ -651,7 +687,8 @@ def scrape_all(urls):
             failed += 1
             if failed >= 10:
                 print("\n  Too many consecutive failures — likely rate-limited.")
-                print(f"::error::10 consecutive page fetches failed; last error: {LAST_FETCH_ERROR}")
+                PROBLEMS.append(f"10 consecutive statement pages failed to load "
+                                f"(last error: {LAST_FETCH_ERROR}); {total - i} pages were not attempted")
                 print("  Progress is saved; re-run later to continue where we left off.")
                 break
             time.sleep(2)
@@ -764,6 +801,11 @@ def main():
         write_excel(rows)
     else:
         print("No statements scraped.")
+
+    if PROBLEMS:
+        for problem in PROBLEMS:
+            print(f"::error::Incomplete run: {problem}.")
+        sys.exit(1)
 
 
 if __name__ == "__main__":
