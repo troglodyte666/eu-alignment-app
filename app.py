@@ -139,3 +139,6 @@ st.dataframe(
     },
     height=450,
 )
+
+st.divider()
+st.caption("Created by Lena Cassidy (CPI Trainee, June-July 2026)")
