@@ -1,73 +1,74 @@
 """Temporary diagnostic: print what EEAS serves to this machine."""
 import re
-import sys
+import time
 import urllib.error
 import urllib.request
 
-from eu_alignment_scraper import HEADERS
+import eu_alignment_scraper as s
 
 BASE = "https://www.eeas.europa.eu"
 
 
-def get(url):
-    req = urllib.request.Request(url, headers=HEADERS)
+def get(url, timeout=30):
+    req = urllib.request.Request(url, headers=s.HEADERS)
+    t0 = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             body = r.read().decode("utf-8", errors="replace")
-            return r.status, r.geturl(), body
+            return r.status, body, time.time() - t0
     except urllib.error.HTTPError as e:
-        return e.code, url, e.read().decode("utf-8", errors="replace")[:600]
+        return e.code, e.read().decode("utf-8", errors="replace")[:600], time.time() - t0
     except Exception as e:
-        return None, url, f"{type(e).__name__}: {e}"
+        return None, f"{type(e).__name__}: {e}", time.time() - t0
 
 
-def show(label, url, head=600):
-    status, final, body = get(url)
-    print(f"\n=== {label}\n    {url}\n    status={status} final={final} len={len(body)}")
-    print("    head:", re.sub(r"\s+", " ", body[:head]))
-    return status, body
-
-
-status, body = show("sitemap root", f"{BASE}/sitemap.xml", 1500)
-if status == 403:
-    print("BLOCKED on this runner")
-    sys.exit(0)
-print("    <sitemap> count:", body.count("<sitemap>"), " <url> count:", body.count("<url>"))
-for loc in re.findall(r"<loc>([^<]+)</loc>", body)[:60]:
-    print("    loc:", loc)
-
-for pg in (1, 2, 3):
-    status, body = show(f"sitemap page {pg}", f"{BASE}/sitemap.xml?page={pg}", 400)
+print("##### A. sitemap pages exactly as production fetches them (1.5s apart, timeout 15)")
+known = set(open("scraped_results.csv", encoding="utf-8").read().split(","))
+new_from_sitemap = {}
+for pg in range(1, 26):
+    status, body, dt = get(f"{BASE}/sitemap.xml?page={pg}", timeout=15)
     entries = re.findall(r"<url>(.*?)</url>", body, re.DOTALL)
-    locs = [(re.search(r"<loc>([^<]+)", e), re.search(r"<lastmod>([^<]+)", e)) for e in entries]
-    locs = [(l.group(1) if l else "", m.group(1) if m else "") for l, m in locs]
-    ny = [x for x in locs if "/delegations/un-new-york/" in x[0]]
-    print(f"    urls={len(locs)} un-new-york={len(ny)} max_lastmod={max((m for _, m in locs), default='')}")
-    for l, m in locs[:5] + locs[-5:]:
-        print("     ", m, l)
-    for l, m in sorted(ny, key=lambda x: x[1])[-15:]:
-        print("      NY", m, l)
+    ny_new = []
+    for e in entries:
+        loc = re.search(r"<loc>([^<]+)", e)
+        mod = re.search(r"<lastmod>([^<]+)", e)
+        if not loc or "/delegations/un-new-york/" not in loc.group(1) or not loc.group(1).endswith("_en"):
+            continue
+        if mod and mod.group(1)[:10] >= "2026-10-15" and loc.group(1) not in known:
+            ny_new.append((mod.group(1)[:10], loc.group(1)))
+    print(f"  page {pg:2d}: status={status} len={len(body)} urls={len(entries)} "
+          f"new_ny={len(ny_new)} {dt:.1f}s head={body[:60]!r}" if not entries else
+          f"  page {pg:2d}: status={status} len={len(body)} urls={len(entries)} new_ny={len(ny_new)} {dt:.1f}s")
+    for m, l in ny_new:
+        new_from_sitemap[l] = m
+    time.sleep(1.5)
+print(f"  NEW un-new-york URLs (lastmod >= 2026-10-15, not in CSV): {len(new_from_sitemap)}")
+for l, m in sorted(new_from_sitemap.items(), key=lambda x: x[1]):
+    print("   ", m, l)
 
-status, body = show("robots", f"{BASE}/robots.txt", 200)
-for line in body.splitlines():
-    if "sitemap" in line.lower():
-        print("   ", line)
-
-candidates = [
-    f"{BASE}/delegations/un-new-york_en",
-    f"{BASE}/delegations/un-new-york_en?s=63",
-    f"{BASE}/delegations/un-new-york/press-material_en",
-    f"{BASE}/filter-page/press-material_en",
-    f"{BASE}/delegations/un-new-york/rss_en",
-    f"{BASE}/delegations/un-new-york/sitemap.xml",
-]
-for url in candidates:
-    status, body = show("candidate", url, 200)
+print("\n##### B. press-material listing for UN New York")
+listing = f"{BASE}/filter-page/press-material_en?f%5B0%5D=press_site%3AUN%20New%20York"
+seen_listing = []
+for suffix in ("", "&page=1", "&page=2"):
+    status, body, dt = get(listing + suffix)
     hrefs = list(dict.fromkeys(re.findall(r'href="([^"]+)"', body)))
-    ny = [h for h in hrefs if "/delegations/un-new-york/" in h]
-    nav = [h for h in hrefs if re.search(r"filter|press-material|page=|rss|feed|\?s=|search", h)]
-    print(f"    hrefs={len(hrefs)} un-new-york={len(ny)}")
-    for h in ny[:40]:
-        print("      NY", h)
-    for h in nav[:40]:
-        print("      NAV", h)
+    ny = [h for h in hrefs if "/delegations/un-new-york/" in h and "global-gateway" not in h]
+    pager = [h for h in hrefs if "page=" in h]
+    print(f"\n  {suffix or '(first page)'}: status={status} len={len(body)} hrefs={len(hrefs)} ny={len(ny)} {dt:.1f}s")
+    for h in ny:
+        full = (BASE + h if h.startswith("/") else h).split("?")[0]
+        print("     NY", full, "" if full in known else "<-- NOT IN CSV")
+    for h in pager[:8]:
+        print("     PAGER", h)
+    seen_listing += ny
+    if suffix == "" and ny:
+        i = body.find(ny[0])
+        print("     CONTEXT:", re.sub(r"\s+", " ", body[max(0, i - 700): i + 500]))
+
+print("\n##### C. one statement page")
+if seen_listing:
+    u = seen_listing[0]
+    u = u if u.startswith("http") else BASE + u
+    status, body, dt = get(u.split("?")[0])
+    print(f"  {u}\n  status={status} len={len(body)} date={s.parse_date(body) if status == 200 else None} "
+          f"title={s.extract_title(body)[:90] if status == 200 else None!r}")
