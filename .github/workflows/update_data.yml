@@ -2,9 +2,8 @@ name: Update alignment data
 
 on:
   schedule:
-    - cron: "0 9 * * 1"  # Every Monday at 9am UTC
-    - cron: "0 9 * * 3"  # Every Wednesday at 9am UTC
-    - cron: "0 9 * * 5"  # Every Friday at 9am UTC
+    # Daily: EEAS blocks GitHub's runners for days at a time, so a missed day is retried the next.
+    - cron: "23 6 * * *"
   workflow_dispatch:      # Also allows manual trigger from GitHub UI
 
 jobs:
@@ -29,10 +28,12 @@ jobs:
       - name: Run UN80 scraper
         run: python eu_alignment_scraper.py --refresh-urls
 
+      # Runs even when the scraper reports an incomplete run, so partial progress is kept.
       - name: Commit updated data
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add scraped_results.csv scraped_results_ga79.csv
           git diff --cached --quiet || git commit -m "Auto-update: $(date '+%d %b %Y')"
-          git push https://x-access-token:${{ secrets.GH_TOKEN }}@github.com/troglodyte666/eu-alignment-app.git
+          git push
