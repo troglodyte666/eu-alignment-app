@@ -16,6 +16,7 @@ import sys
 import time
 import urllib.request
 from datetime import date, datetime
+from html import unescape
 from pathlib import Path
 
 import pandas as pd
@@ -516,7 +517,9 @@ def parse_date(html):
 def extract_title(html):
     m = re.search(r"<h1[^>]*>(.*?)</h1>", html, re.DOTALL | re.IGNORECASE)
     if m:
-        return re.sub(r"<[^>]+>", "", m.group(1)).strip()
+        # Decode entities (&#039;, &quot;, &amp; ...) after stripping tags, so an
+        # escaped "&lt;" in a title is kept as text rather than removed as a tag.
+        return unescape(re.sub(r"<[^>]+>", "", m.group(1))).strip()
     return ""
 
 
